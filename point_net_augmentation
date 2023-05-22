@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Fri Jul 15 07:48:21 2022
+
+@author: agustinzhang
+"""
+
+
+import pandas as pd
+import numpy as np
+import math
+import os
+import random
+from sklearn.neighbors import NearestNeighbors
+
+from tqdm import tqdm
+import shutil
+
+path_folder = '/Users/agustinzhang/Downloads/master_AI/TFM/Dato/Datos_pointnet/'
+folder = os.path.exists(path_folder+'train')
+
+if folder == True:
+    shutil.rmtree(path_folder+'train')
+    shutil.rmtree(path_folder+'test')
+
+    os.makedirs(path_folder+'train')
+    os.makedirs(path_folder+'test')
+else:
+    os.makedirs(path_folder+'train')
+    os.makedirs(path_folder+'test')
+
+class get_real_data:
+    
+    #d: the number of decimals reserved
+    #n: the number of the nearest points selected around the feature point
+    #path_data_file: the direction of the folder where contains the txt.
+    def __init__(self, path_data_file):
+        self.path_data_file = path_data_file
+
+    
+    # import all the files in the folder as dataframe, and name them as df_n
+    def get_file(self):
+        file_path = self.path_data_file
+        file_list = []
+        
+        for i in os.listdir(file_path):
+            file_list.append(os.path.join(file_path, i))
+        
+        names = locals()
+        list_df = []
+        
+        for j in range(len(file_list)):
+            names['df_%s' % j] = pd.read_table(file_list[j], sep='\t', skiprows=2)
+            list_df.append(names['df_%s' % j])
+            
+        return list_df
+    
+    # in this case only consider the points with PT marked (not NA or not -1)
+    def trans_df_data(self):
+        list_df = self.get_file()
+        names = locals()
+        
+        list_df_trans = []
+        for i in range(len(list_df)):
+            df = list_df[i]
+            # get ride of NA and -1
+            df = df.dropna(subset=['PT'])
+            df.PT = df['PT'].astype(int)
+            df = df[df.PT >= 0]
+            df = df[df.PT <= 5]
+            df.PT = df['PT'].astype(str)
+            #make sure PT has only 4 values
+            for j in df.PT.unique():
+                if len(df[df.PT == j]) != 4:
+                    df = df.drop(df[df.PT == j].index)
+                
+            # number of PT
+            n_marker = len(df.PT.unique())
+            df_trans = df[['H', 'V', 'PT']]
+            # put the (0,0) in the middle of the image
+            df_trans['H'] = df_trans.H+2000.5
+            df_trans['V'] = df_trans.V+1500.5
+            # rearrange the orden of the dataframe by PT, and reset the index
+            df_trans = df_trans.sort_values(by='PT', ascending=True)
+            df_trans = df_trans.reset_index(drop=True)
+             
+            # # Mark the points of each PT by a b c d, depends on how many points there are
+            # # For example, there are several dataframes only have 3 points or less in under the PT value,
+            # # in this case only mark the points as a b or a b c
+            # # but in this script the situation of lacking of points in PT (the occultation situation) is not under the consideration
+            # # in the last step, the PT which contains less than 4 points will be removed.
+            # PT_unique = np.sort(df.PT.unique())
+            # num = df.PT.value_counts()
+            # l_p = ['a', 'b', 'c', 'd']
+            # pointname = []
+            # for j in range(len(PT_unique)):
+            #     point = l_p[:num[PT_unique[j]]]
+            #     pointname.extend(point)
+             
+            # # Create a new column 'Point' to put names on each point    
+            # df_trans['Point'] = pointname
+            
+            # get rid of the PT which doesn't contain 4 points
+            # also to check if the df is empty, sometimes there is certain DF doesn't have any PT marked
+            if len(df_trans) != 0:
+                if len(df_trans) ==24:
+                    names['df_trans_%s'%i] = df_trans
+                    
+                    list_df_trans.append(names['df_trans_%s'%i])
+
+        return list_df_trans
+
+    def get_distance(self, point1, point2):
+
+        return math.sqrt((point2[0]- point1[0])**2 + (point2[1]- point1[1])**2)
+
+#绕点（cx，cy）旋转
+    def rotate_data(self, list_x, list_y, x0, y0, distance):
+        flag = False
+
+
+        while flag == False:
+        
+            cx = x0 + random.uniform(-distance, distance)
+            cy = y0 + random.uniform(-distance, distance)
+            angle = random.uniform(0,360)*np.pi/ 180
+            list_new_x = []
+            list_new_y = []
+            for i in range(len(list_x)):
+                x = list_x[i]
+                y = list_y[i]
+            
+                x_new = (x - cx) * math.cos(angle) - (y - cy) * math.sin(angle) + cx
+                y_new = (x - cx) * math.sin(angle) + (y - cy) * math.cos(angle) + cy
+            
+                list_new_x.append(x_new)
+                list_new_y.append(y_new)
+            
+            outrange_x = [j for j in range(len(list_new_x)) if list_new_x[j] >= 4000-150 or list_new_x[j] <= 0]
+            outrange_y = [k for k in range(len(list_new_y)) if list_new_y[k] >= 3000-150 or list_new_y[k] <= 0]
+
+
+            if outrange_x == [] and outrange_y ==[]:
+                flag = True
+
+        return list_new_x, list_new_y
+    
+    def data_augmentation(self, list_df, num_augmentation, distance):
+
+        
+        list_24 = []
+        for df in list_df:
+            len_df = len(df)
+            if len_df == 24:
+                list_24.append(df)
+        
+        # num_test = int(num_augmentation*len(list_24)/(num_augmentation + 10))
+        num_test = int(len(list_24)*0.3)
+        
+        test = random.sample(range(len(list_24)), num_test)
+        for i in test:
+            list_24[i].to_csv(os.path.join('/Users/agustinzhang/Downloads/master_AI/TFM/Dato/Datos_pointnet/test', 'df_test'+str(i)),  sep='\t',index=False)
+        list_df_augmentated = []
+        train = list(set(range(len(list_24))) - set(test))
+        
+        
+        for j in tqdm(range(num_augmentation)):
+            for index in train:
+                flag2 = False
+                while flag2 == False:
+                    df = list_24[index]
+                    x_list_total = []
+                    y_list_total = []
+                    PT_list = []
+                    x0y0_list = []
+
+
+                    for PT in df.PT.unique():
+                        df_PT = df[df.PT == PT]
+                        x_list = df_PT.H.values.tolist()
+                        y_list = df_PT.V.values.tolist()
+
+                        x0 = sum(x_list)/4
+                        y0 = sum(x_list)/4
+
+                        list_new_x, list_new_y = self.rotate_data(x_list, y_list, x0, y0, distance)
+
+                        x0_rotated = sum(list_new_x)/4
+                        y0_rotated = sum(list_new_y)/4
+                        x0y0 = [x0_rotated, y0_rotated]
+                        x0y0_list.append(x0y0)
+
+                        x_list_total = x_list_total + list_new_x
+                        y_list_total = y_list_total + list_new_y
+                        PT_list = PT_list + [PT] * 4
+                        
+                    nbrs = NearestNeighbors(n_neighbors=2, metric=self.get_distance).fit(x0y0_list)
+                    # 这n个点之间的距离及其index
+                    distances, indices = nbrs.kneighbors(x0y0_list)
+                    min_dis = distances[:, 1].min()
+# to avoid markers overlap
+                    if min_dis >= 360:
+
+                        df_augmented = pd.DataFrame()
+                        df_augmented['H'] = x_list_total
+                        df_augmented['V'] = y_list_total
+                        df_augmented['PT'] = PT_list
+                        list_df_augmentated.append(df_augmented)
+                        flag2 = True
+        return list_df_augmentated
+                
+                
+# =============================================================================
+# 
+# =============================================================================
+
+file_path = '/Users/agustinzhang/Downloads/master_AI/TFM/Dato/Datos'
+
+realdata = get_real_data(file_path)
+list_df_trans = realdata.trans_df_data()
+list_df_augmentated = realdata.data_augmentation(list_df_trans, 30, 100 )
+
+for i in range(len(list_df_augmentated)):
+    df = list_df_augmentated[i]
+    df.to_csv(os.path.join('/Users/agustinzhang/Downloads/master_AI/TFM/Dato/Datos_pointnet/train', 'df'+'_'+str(i)), sep='\t', index=False)
+
